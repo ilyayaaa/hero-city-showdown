@@ -1,8 +1,10 @@
-// The three bosses that close waves 5, 10 and 15: the Tidecrusher Kraken (tentacle slams, ink
-// rings), the Cinder Phoenix (telegraphed dives, fire fans, feather rain) and Smogmaw the Titan
-// (stomps, beam fans, mortars). Each has phases; every big hit is telegraphed in red first.
-import { H, PLAZA, TAU, W, clamp, dist, edgePoint, hurtPlaza, hurtPlayer, segDist } from './combat.js';
+// The three bosses of nights 5, 10 and 15: the Tidecrusher Kraken (tentacle slams, ink rings),
+// the Cinder Phoenix (telegraphed dives, fire fans, feather rain) and Smogmaw the Titan (stomps,
+// beam fans, mortars). Each has phases, and each phase roar snuffs the two lamps nearest it;
+// every big hit is telegraphed in red first. Dawn waits until the boss is banished.
+import { H, BEACON, TAU, W, clamp, dist, edgePoint, hurtBeacon, hurtPlayer, segDist } from './combat.js';
 import { spawnEnemy } from './enemies.js';
+import { snuffNearest } from './lamps.js';
 import { addText, burst, flash, glow, ring, shake } from './particles.js';
 
 export const BOSS_OF = { 5: 'kraken', 10: 'phoenix', 15: 'titan' };
@@ -41,20 +43,20 @@ function lineTele(S, x1, y1, tx, ty, len, w, dur, fire) {
 function lineHits(S, tl, playerDmg, coreDmg) {
   const p = S.player;
   if (p.down <= 0 && segDist(p.x, p.y, tl.x1, tl.y1, tl.x2, tl.y2) < tl.w / 2 + p.r * 0.6) hurtPlayer(S, playerDmg);
-  if (coreDmg && segDist(PLAZA.x, PLAZA.y, tl.x1, tl.y1, tl.x2, tl.y2) < tl.w / 2 + PLAZA.r) hurtPlaza(S, coreDmg);
+  if (coreDmg && segDist(BEACON.x, BEACON.y, tl.x1, tl.y1, tl.x2, tl.y2) < tl.w / 2 + BEACON.r) hurtBeacon(S, coreDmg);
 }
 
 function circleHits(S, tl, playerDmg, coreDmg) {
   const p = S.player;
   if (p.down <= 0 && dist(p.x, p.y, tl.x, tl.y) < tl.r + p.r * 0.5) hurtPlayer(S, playerDmg);
-  if (coreDmg && dist(PLAZA.x, PLAZA.y, tl.x, tl.y) < tl.r + PLAZA.r) hurtPlaza(S, coreDmg);
+  if (coreDmg && dist(BEACON.x, BEACON.y, tl.x, tl.y) < tl.r + BEACON.r) hurtBeacon(S, coreDmg);
 }
 
-/** A target point: the hero (chance) or the City Core. Only attacks aimed at the Core damage it. */
+/** A target point: the hero (chance) or the Beacon. Only attacks aimed at the Core damage it. */
 function playerOrCore(S, chance = 0.7) {
   const p = S.player;
   if (p.down <= 0 && S.rng() < chance) return { x: p.x, y: p.y, core: false };
-  return { x: PLAZA.x + (S.rng() - 0.5) * 40, y: PLAZA.y + (S.rng() - 0.5) * 40, core: true };
+  return { x: BEACON.x + (S.rng() - 0.5) * 40, y: BEACON.y + (S.rng() - 0.5) * 40, core: true };
 }
 
 function setPhase(S, b, phase, text) {
@@ -66,7 +68,8 @@ function setPhase(S, b, phase, text) {
   shake(S, 16);
   flash(S, '#ff3355', 0.35);
   ring(S, b.x, b.y, b.color, 20, 360, 0.8, 10);
-  S.banner = { title: text, sub: '', t: 0, dur: 2, color: '#ff5a6e', small: true };
+  snuffNearest(S, b.x, b.y, 2);
+  S.banner = { title: text, sub: 'Its roar snuffed two lamps!', t: 0, dur: 2.2, color: '#ff5a6e', small: true };
 }
 
 export function updateBosses(S, dt) {
@@ -213,7 +216,7 @@ function phoenix(S, b, dt) {
     } else {
       const n = b.phase === 2 ? 8 : 5;
       for (let i = 0; i < n; i += 1) {
-        const c = i % 2 ? S.player : PLAZA;
+        const c = i % 2 ? S.player : BEACON;
         const x = clamp(c.x + (S.rng() - 0.5) * 320, 50, W - 50);
         const y = clamp(c.y + (S.rng() - 0.5) * 240, 50, H - 50);
         tele(S, 'circle', { x, y, r: 62 }, 1.2 + i * 0.12, (S2, tl) => {
@@ -257,9 +260,9 @@ function phoenix(S, b, dt) {
     }
     const p = S.player;
     if (!dv.hit && p.down <= 0 && dist(b.x, b.y, p.x, p.y) < b.r * 0.8 + p.r) dv.hit = hurtPlayer(S, 30);
-    if (!dv.core && dist(b.x, b.y, PLAZA.x, PLAZA.y) < PLAZA.r + 30) {
+    if (!dv.core && dist(b.x, b.y, BEACON.x, BEACON.y) < BEACON.r + 30) {
       dv.core = true;
-      hurtPlaza(S, 32);
+      hurtBeacon(S, 32);
     }
   }
 }
@@ -335,7 +338,7 @@ function titan(S, b, dt) {
     for (let i = 0; i < 4; i += 1) {
       const a = S.rng() * TAU;
       const rr = 40 + S.rng() * 120;
-      tele(S, 'circle', { x: PLAZA.x + Math.cos(a) * rr, y: PLAZA.y + Math.sin(a) * rr, r: 64 }, 1.4 + i * 0.15, (S2, tl) => {
+      tele(S, 'circle', { x: BEACON.x + Math.cos(a) * rr, y: BEACON.y + Math.sin(a) * rr, r: 64 }, 1.4 + i * 0.15, (S2, tl) => {
         circleHits(S2, tl, 22, 30);
         burst(S2, tl.x, tl.y, '#9dff4a', 16, { speed: 240, life: 0.5, size: 5 });
         ring(S2, tl.x, tl.y, '#9dff4a', 8, tl.r, 0.35, 6);

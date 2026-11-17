@@ -1,38 +1,49 @@
-// The game world and its fixed-step update: the hero, allies, projectiles, monsters, bosses,
-// telegraphed attacks, hazards, pickups, combo and score, and the wave cycle
-// (intro -> fight -> clear -> upgrade -> next wave, until wave 15 is beaten or the Core falls).
-import { H, PLAZA, TAU, W, clamp, damageEnemy, dist, hurtPlaza, hurtPlayer, nearestEnemy, pushOutOfBuildings } from './combat.js';
+// The game world and its fixed-step update: the hero, allies, projectiles, shadows, bosses,
+// telegraphed attacks, hazards, Spark motes, lamps, chain and score. The night cycle itself
+// (dusk -> night -> dawn -> upgrade -> next dusk) lives in night.js, the light rules in lamps.js.
+import { BEACON, H, TAU, W, clamp, damageEnemy, dist, hurtBeacon, hurtPlayer, nearestEnemy, pushOutOfBuildings } from './combat.js';
 import { createRandom } from './random.js';
 import { HEROES, heroAttack, heroUltimate, onShotHit, updateZones } from './heroes.js';
 import { handleDeath, updateEnemies } from './enemies.js';
 import { onBossDeath, updateBosses } from './bosses.js';
-import { MAX_WAVE, buildWave, updateSpawns, waveBanner } from './waves.js';
-import { applyUpgrade, newMods, rollOffer } from './upgrades.js';
+import { applyUpgrade, newMods } from './upgrades.js';
+import { DIFFICULTY, startNight, updateNight } from './night.js';
+import { addFlare, createLamps, revealShadows, updateLamps } from './lamps.js';
 import { addText, burst, ring, updateFx } from './particles.js';
 
-export function createWorld(seed, heroIndex) {
+export const DASH_CD = 0.85;
+export const START_SPARK = 10;
+
+export function createWorld(seed, heroIndex, difficulty = 1) {
   const hero = HEROES[heroIndex];
-  return {
-    rng: createRandom(seed), sfx: () => {}, hero, heroIndex,
-    time: 0, wave: 1, phase: 'intro', phaseT: 0, result: null, banner: waveBanner(1), ultFx: null,
+  const diff = DIFFICULTY[difficulty];
+  const S = {
+    rng: createRandom(seed), sfx: () => {}, hero, heroIndex, diff, difficulty,
+    time: 0, night: 1, phase: 'dusk', phaseT: 0, nightT: 0, nightLen: 45, result: null, banner: null, ultFx: null,
     player: {
-      x: PLAZA.x, y: PLAZA.y + 100, vx: 0, vy: 0, r: 15, hp: hero.hp, maxHp: hero.hp, ult: 0, ultReady: false,
+      x: BEACON.x, y: BEACON.y + 100, vx: 0, vy: 0, r: 15, hp: hero.hp, maxHp: hero.hp, ult: 0, ultReady: false,
       atkCd: 0, dashT: 0, dashCd: 0, dvx: 0, dvy: 0, dashHit: [], inv: 0, down: 0, hurtT: 0, fireT: 0,
-      aim: -Math.PI / 2, aimX: PLAZA.x, aimY: 200, moving: false,
+      aim: -Math.PI / 2, aimX: BEACON.x, aimY: 200, moving: false,
     },
-    plaza: { hp: 1000, max: 1000, hitT: 0, healT: 0, lastSfx: -1 },
+    beacon: { hp: diff.beacon, max: diff.beacon, hitT: 0, healT: 0, lastSfx: -1 },
+    lamps: createLamps(), flares: [], wardMul: 1, relightLamp: null, relightK: 0,
+    spark: START_SPARK, motes: [],
     enemies: [], shots: [], foes: [], zones: [], tele: [], hazards: [], allies: [], bolts: [], slams: [], beams: [], ghosts: [], pickups: [],
     parts: [], texts: [], arcs: [], shake: 0, flashA: 0, flashColor: '#ffffff',
-    queue: [], waveT: 0, hpMul: 1, boss: null, bossKills: 0, droneA: 0,
-    score: 0, combo: 0, comboT: 0, maxCombo: 0, kills: 0, slowT: 0,
+    queue: [], spawnT: 0, hpMul: 1, foeDmg: 1, boss: null, bossKills: 0, droneA: 0,
+    score: 0, combo: 0, comboT: 0, maxCombo: 0, kills: 0, slowT: 0, nightsSurvived: 0,
     mods: newMods(), picks: {}, offer: null, nextId: 1,
-    stats: { damage: 0, ults: 0, coreDamage: 0 },
+    stats: { damage: 0, ults: 0, beaconDamage: 0, relit: 0, snuffed: 0 },
   };
+  // Night 1 opens with one lamp already dark, so the relight is learned at once.
+  S.lamps[6].power = 0;
+  startNight(S);
+  return S;
 }
 
-/** A fresh intent: what the player wants this step (movement, aim point, fire, dash, ultimate). */
+/** A fresh intent: what the player wants this step (move, aim, fire, dash, relight held, ultimate). */
 export function newIntent() {
-  return { mx: 0, my: 0, ax: PLAZA.x, ay: 200, fire: false, dash: false, ult: false };
+  return { mx: 0, my: 0, ax: BEACON.x, ay: 200, fire: false, dash: false, relight: false, ult: false };
 }
 
 export function stepWorld(S, realDt, I) {
@@ -46,8 +57,10 @@ export function stepWorld(S, realDt, I) {
     updateFx(S, dt);
     return;
   }
-  updatePhase(S, dt);
+  updateNight(S, dt);
+  revealShadows(S);
   updatePlayer(S, dt, I);
+  updateLamps(S, dt, I);
   updateAllies(S, dt);
   updateZones(S, dt);
   updateBosses(S, dt);
@@ -62,59 +75,26 @@ export function stepWorld(S, realDt, I) {
     if (e.boss) onBossDeath(S, e);
   }
   S.enemies = S.enemies.filter((e) => !e.dead);
+  updateMotes(S, dt);
   if (S.comboT > 0 && (S.comboT -= dt) <= 0) S.combo = 0;
-  S.plaza.hitT -= dt;
-  S.plaza.healT -= dt;
+  S.beacon.hitT -= dt;
+  S.beacon.healT -= dt;
   updateFx(S, dt);
 }
 
+/** Takes upgrade `index` of the offer and starts the next night's dusk. */
 export function chooseUpgrade(S, index) {
   const id = S.offer?.[index];
   if (!id) return false;
   applyUpgrade(S, id);
   S.lastPick = id;
   S.offer = null;
-  S.wave += 1;
-  S.phase = 'intro';
-  S.phaseT = 0;
-  S.banner = waveBanner(S.wave);
+  S.night += 1;
   const p = S.player;
   if (p.down <= 0) p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.3);
-  S.plaza.hp = Math.min(S.plaza.max, S.plaza.hp + S.plaza.max * 0.04);
+  S.beacon.hp = Math.min(S.beacon.max, S.beacon.hp + S.beacon.max * 0.05);
+  startNight(S);
   return true;
-}
-
-function updatePhase(S, dt) {
-  S.phaseT += dt;
-  if (S.banner && (S.banner.t += dt) > S.banner.dur) S.banner = null;
-  if (S.ultFx && (S.ultFx.t += dt) > 1.6) S.ultFx = null;
-  if (S.phase === 'intro') {
-    if (S.phaseT > 2.3) {
-      S.phase = 'fight';
-      S.phaseT = 0;
-      buildWave(S, S.wave);
-      S.sfx('go');
-    }
-  } else if (S.phase === 'fight') {
-    updateSpawns(S, dt);
-    if (!S.queue.length && !S.enemies.some((e) => !e.dead)) {
-      S.phase = 'clear';
-      S.phaseT = 0;
-      const bonus = 100 * S.wave + Math.round((300 * S.plaza.hp) / S.plaza.max);
-      S.score += bonus;
-      S.banner = { title: S.wave >= MAX_WAVE ? 'CITY SAVED!' : 'WAVE CLEAR!', sub: `+${bonus} bonus`, t: 0, dur: 2, color: '#7dff6e' };
-      S.foes = [];
-      S.tele = [];
-      S.sfx('clear');
-    }
-  } else if (S.phase === 'clear' && S.phaseT > 2.1) {
-    if (S.wave >= MAX_WAVE) S.result = 'victory';
-    else {
-      S.phase = 'upgrade';
-      S.offer = rollOffer(S);
-      S.sfx('offer');
-    }
-  }
 }
 
 function updatePlayer(S, dt, I) {
@@ -135,8 +115,8 @@ function updatePlayer(S, dt, I) {
     I.ult = false;
     p.down -= dt;
     if (p.down <= 0) {
-      p.x = PLAZA.x;
-      p.y = PLAZA.y + 90;
+      p.x = BEACON.x;
+      p.y = BEACON.y + 90;
       p.vx = p.vy = 0;
       p.hp = p.maxHp;
       p.inv = 2;
@@ -159,7 +139,7 @@ function updatePlayer(S, dt, I) {
     p.dvx = Math.cos(a) * 900;
     p.dvy = Math.sin(a) * 900;
     p.dashT = 0.17;
-    p.dashCd = 0.85 * m.dashCdMul;
+    p.dashCd = DASH_CD * m.dashCdMul;
     p.dashHit = [];
     S.sfx('dash');
     burst(S, p.x, p.y, h.color, 10, { angle: a + Math.PI, spread: 1.2, speed: 220, life: 0.35, size: 3 });
@@ -178,7 +158,8 @@ function updatePlayer(S, dt, I) {
       }
     }
   } else {
-    const sp = h.speed * m.speedMul;
+    // Holding E at a lamp roots the hero while the wick catches.
+    const sp = h.speed * m.speedMul * (I.relight && S.relightLamp ? 0.25 : 1);
     const k = Math.min(1, dt * 14);
     p.vx += (mx * sp - p.vx) * k;
     p.vy += (my * sp - p.vy) * k;
@@ -186,11 +167,11 @@ function updatePlayer(S, dt, I) {
     p.y += p.vy * dt;
   }
   pushOutOfBuildings(p, p.r);
-  const dc = dist(p.x, p.y, PLAZA.x, PLAZA.y);
-  const minD = PLAZA.r + p.r - 6;
+  const dc = dist(p.x, p.y, BEACON.x, BEACON.y);
+  const minD = BEACON.r + p.r - 6;
   if (dc < minD && dc > 0.01) {
-    p.x = PLAZA.x + ((p.x - PLAZA.x) / dc) * minD;
-    p.y = PLAZA.y + ((p.y - PLAZA.y) / dc) * minD;
+    p.x = BEACON.x + ((p.x - BEACON.x) / dc) * minD;
+    p.y = BEACON.y + ((p.y - BEACON.y) / dc) * minD;
   }
   p.x = clamp(p.x, p.r, W - p.r);
   p.y = clamp(p.y, p.r, H - p.r);
@@ -199,8 +180,10 @@ function updatePlayer(S, dt, I) {
     p.atkCd = h.rate / m.rateMul;
   }
   if (I.ult) {
-    if (p.ult >= 100) heroUltimate(S);
-    else S.sfx('deny');
+    if (p.ult >= 100) {
+      heroUltimate(S);
+      addFlare(S, p.x, p.y, 250 * Math.sqrt(m.ultPower), 4, h.color);
+    } else S.sfx('deny');
   }
   I.ult = false;
   const regen = m.regen + (h.id === 'bloom' ? 1.5 : 0);
@@ -208,7 +191,7 @@ function updatePlayer(S, dt, I) {
   if (p.ult >= 100 && !p.ultReady) {
     p.ultReady = true;
     S.sfx('ready');
-    addText(S, p.x, p.y - 38, 'ULTIMATE READY! [E]', h.color, 18, true);
+    addText(S, p.x, p.y - 38, 'ULTIMATE READY! [Q]', h.color, 18, true);
   } else if (p.ult < 100) p.ultReady = false;
   for (const pk of S.pickups) {
     pk.t += dt;
@@ -226,6 +209,32 @@ function updatePlayer(S, dt, I) {
     }
   }
   S.pickups = S.pickups.filter((pk) => pk.t < 12);
+}
+
+/** Spark motes left by banished shadows: they drift, fly to a hero who comes near, then fade. */
+function updateMotes(S, dt) {
+  const p = S.player;
+  for (const m of S.motes) {
+    m.t += dt;
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    const k = Math.exp(-3 * dt);
+    m.vx *= k;
+    m.vy *= k;
+    if (p.down > 0) continue;
+    const d = dist(m.x, m.y, p.x, p.y);
+    if (d < 150 * S.mods.magnet && d > 0.1) {
+      const pull = 900 * dt;
+      m.vx += ((p.x - m.x) / d) * pull;
+      m.vy += ((p.y - m.y) / d) * pull;
+    }
+    if (d < 24) {
+      m.t = 99;
+      S.spark += m.n;
+      S.sfx('spark');
+    }
+  }
+  S.motes = S.motes.filter((m) => m.t < 14);
 }
 
 function updateAllies(S, dt) {
@@ -304,8 +313,8 @@ function updateFoes(S, dt) {
     f.y += f.vy * dt;
     if (p.down <= 0 && dist(f.x, f.y, p.x, p.y) < f.r + p.r * 0.8) {
       if (hurtPlayer(S, f.dmg) || p.dashT <= 0) f.life = 0;
-    } else if (dist(f.x, f.y, PLAZA.x, PLAZA.y) < f.r + PLAZA.r) {
-      hurtPlaza(S, f.dmg);
+    } else if (dist(f.x, f.y, BEACON.x, BEACON.y) < f.r + BEACON.r) {
+      hurtBeacon(S, f.dmg);
       f.life = 0;
     } else if (pushOutOfBuildings({ x: f.x, y: f.y }, f.r)) f.life = 0;
     if (f.life <= 0) burst(S, f.x, f.y, f.color, 6, { speed: 140, life: 0.3, size: 3 });

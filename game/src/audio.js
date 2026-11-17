@@ -103,7 +103,7 @@ function noise(dur, o = {}) {
 
 const arp = (notes, step, o) => notes.forEach((n, i) => tone(n, o.dur ?? 0.16, { ...o, delay: (o.delay ?? 0) + i * step }));
 
-const GAP = { hit: 0.035, pop: 0.03, core: 0.25, zap: 0.05, wind: 0.2, spit: 0.08, warn: 0.15, deny: 0.3, turret: 0.09, boom: 0.07, slam: 0.06, hurt: 0.1, ui: 0.04 };
+const GAP = { kindle: 0.09, spark: 0.04, snuff: 0.2, hit: 0.035, pop: 0.03, core: 0.25, zap: 0.05, wind: 0.2, spit: 0.08, warn: 0.15, deny: 0.3, turret: 0.09, boom: 0.07, slam: 0.06, hurt: 0.1, ui: 0.04 };
 
 export function sfx(name) {
   if (!ac || muted) return;
@@ -146,6 +146,12 @@ export function sfx(name) {
     case 'offer': arp([392, 523, 659], 0.05, { type: 'sine', vol: 0.08, dur: 0.5 }); break;
     case 'pick': tone(784, 0.16, { type: 'triangle', slide: 1568, vol: 0.12 }); noise(0.2, { type: 'highpass', freq: 4000, vol: 0.06 }); break;
     case 'ui': tone(620, 0.05, { type: 'triangle', vol: 0.06 }); break;
+    case 'snuff': noise(0.5, { type: 'lowpass', freq: 900, slide: 120, vol: 0.3 }); tone(330, 0.5, { type: 'triangle', slide: 90, vol: 0.12 }); break;
+    case 'kindle': noise(0.08, { type: 'bandpass', freq: 2600, q: 3, vol: 0.06 }); break;
+    case 'relight': arp([523, 784, 1047, 1568], 0.06, { type: 'triangle', vol: 0.12, dur: 0.3 }); noise(0.3, { type: 'highpass', freq: 3000, vol: 0.08 }); break;
+    case 'spark': tone(1320 + Math.random() * 300, 0.07, { type: 'sine', vol: 0.05 }); break;
+    case 'dusk': tone(220, 1.4, { type: 'sine', slide: 110, vol: 0.12, attack: 0.3 }); tone(330, 1.4, { type: 'triangle', slide: 165, vol: 0.05, attack: 0.3 }); break;
+    case 'dawn': arp([392, 523, 659, 784, 1047], 0.1, { type: 'triangle', vol: 0.12, dur: 0.6 }); tone(196, 1.8, { type: 'sine', vol: 0.12, attack: 0.4 }); break;
     case 'select': tone(520, 0.14, { type: 'square', slide: 1040, vol: 0.07, lp: 3000 }); break;
     case 'turret': tone(1100, 0.04, { type: 'square', slide: 700, vol: 0.025, lp: 3000 }); break;
     case 'gameover': arp([392, 330, 262, 196], 0.22, { type: 'sawtooth', vol: 0.1, dur: 0.4, lp: 1500 }); break;

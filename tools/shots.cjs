@@ -65,7 +65,8 @@ async function play(browser, seconds) {
         await page.keyboard.down(held);
       }
       if (i % 7 === 0) await page.keyboard.press('Space');
-      if (i % 5 === 0) await page.keyboard.press('KeyE');
+      if (i % 5 === 0) await page.keyboard.press('KeyQ');
+      if (i % 11 === 0) { await page.keyboard.down('KeyE'); await page.waitForTimeout(300); await page.keyboard.up('KeyE'); }
       if (i % 9 === 0) await page.keyboard.press('Digit2');
       if (i === 30) { await page.keyboard.press('KeyP'); await page.waitForTimeout(150); await page.keyboard.press('KeyP'); }
       if (i === 40) { await page.keyboard.press('KeyM'); await page.keyboard.press('KeyM'); }
@@ -78,10 +79,40 @@ async function play(browser, seconds) {
   }
 }
 
+// Walks the hero to night 1's dark lamp (left of the Beacon), holds E, and saves before/after frames.
+async function relight(browser) {
+  const out = path.resolve(process.argv[3] || '/tmp/hcs-play');
+  fs.mkdirSync(out, { recursive: true });
+  const { page, errors } = await open(browser);
+  await page.goto(BASE);
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Digit3');
+  await page.waitForTimeout(500);
+  await page.keyboard.down('KeyA');
+  await page.waitForTimeout(1150);
+  await page.keyboard.up('KeyA');
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(330);
+  await page.keyboard.up('KeyW');
+  await page.screenshot({ path: `${out}/relight-before.jpg`, type: 'jpeg', quality: 70 });
+  await page.keyboard.down('KeyE');
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${out}/relight-mid.jpg`, type: 'jpeg', quality: 70 });
+  await page.waitForTimeout(700);
+  await page.keyboard.up('KeyE');
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `${out}/relight-after.jpg`, type: 'jpeg', quality: 70 });
+  console.log('relight test', errors.length ? errors : 'no console errors');
+  await page.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ executablePath: EXE, args: ['--autoplay-policy=no-user-gesture-required'] });
   try {
     if (process.argv[2] === 'play') await play(browser, Number(process.argv[3] || 20));
+    else if (process.argv[2] === 'relight') await relight(browser);
     else if (process.argv[2] === 'one') await shots(browser, [{ query: process.argv[3], name: path.resolve(process.argv[4]) }]);
     else await shots(browser);
   } finally {

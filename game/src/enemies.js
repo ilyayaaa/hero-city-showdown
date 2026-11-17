@@ -1,12 +1,19 @@
-// The monsters: their kinds and stats, how they hunt the hero or march on the City Core, status
-// effects (burn, slow, freeze, telekinetic throws), what happens when they die, and how each
-// kind is drawn.
-import { H, PLAZA, TAU, W, aoe, damageEnemy, dist, hurtPlaza, hurtPlayer, pushOutOfBuildings } from './combat.js';
+// The shadows: their kinds and stats, how they hunt the hero or march on the Beacon (and how
+// Snuffers hunt lamps), the slow of the light, status effects (burn, slow, freeze, telekinetic
+// throws), the Spark they leave when banished, and how each kind is drawn.
+import { H, BEACON, TAU, W, aoe, damageEnemy, dist, hurtBeacon, hurtPlayer, pushOutOfBuildings } from './combat.js';
+import { drainLamp } from './lamps.js';
 import { arc, burst, glow, ring, shake } from './particles.js';
 
-/** aggro: how close the hero must be before this kind turns on them (0: always the City Core). */
+/** How much slower a shadow moves inside the light. */
+export const LIGHT_SLOW = 0.4;
+/** Spark each kind leaves when banished (bosses leave a hoard). */
+const SPARK = { grunt: 1, runner: 1, spitter: 1, splitter: 1, mini: 0, tank: 3, flier: 1, snuffer: 2, kraken: 12, phoenix: 15, titan: 20 };
+
+/** aggro: how close the hero must be before this kind turns on them (0: always the Beacon). */
 export const KINDS = {
   grunt: { name: 'Smogling', hp: 34, speed: 78, r: 15, dmg: 8, atk: 0.9, score: 10, mass: 1, aggro: 150, color: '#a35cff' },
+  snuffer: { name: 'Snuffer', hp: 48, speed: 96, r: 14, dmg: 6, atk: 1, score: 25, mass: 1, aggro: 0, color: '#8d7bff' },
   runner: { name: 'Skitter', hp: 18, speed: 178, r: 11, dmg: 5, atk: 0.6, score: 12, mass: 0.6, aggro: 110, color: '#ff3b5c' },
   tank: { name: 'Bruiser', hp: 260, speed: 42, r: 27, dmg: 22, atk: 1.4, score: 45, mass: 5, aggro: 0, color: '#ff8a3c' },
   spitter: { name: 'Spitter', hp: 42, speed: 64, r: 15, dmg: 9, atk: 2.2, score: 20, mass: 1, aggro: 280, range: 260, color: '#9dff4a' },
@@ -24,7 +31,7 @@ export function spawnEnemy(S, kind, x, y, hpMul = 1) {
     id: S.nextId++, kind, x, y, r: k.r, hp: k.hp * hpMul, maxHp: k.hp * hpMul, hpMul,
     speed: k.speed * (0.92 + S.rng() * 0.16), dmg: k.dmg * (S.foeDmg ?? 1), atk: k.atk, atkT: k.atk * S.rng(), score: k.score,
     mass: k.mass, aggro: k.aggro, range: k.range ?? 0, fly: !!k.fly, color: k.color,
-    face: Math.atan2(PLAZA.y - y, PLAZA.x - x), t: S.rng() * 10, kx: 0, ky: 0, flash: 0, inv: 0, lunge: 0,
+    face: Math.atan2(BEACON.y - y, BEACON.x - x), t: S.rng() * 10, kx: 0, ky: 0, flash: 0, inv: 0, lunge: 0,
     slowT: 0, slowAmt: 0, frozenT: 0, burnT: 0, burnDps: 0, grabbed: false, lift: 0, thrown: 0, dead: false, boss: false,
   };
   S.enemies.push(e);
@@ -75,10 +82,11 @@ export function updateEnemies(S, dt) {
 
 function behave(S, e, dt) {
   const p = S.player;
-  const slow = 1 - (e.slowT > 0 ? e.slowAmt : 0);
-  let tx = PLAZA.x;
-  let ty = PLAZA.y;
-  let tr = PLAZA.r;
+  const slow = (1 - (e.slowT > 0 ? e.slowAmt : 0)) * (e.lit ? 1 - LIGHT_SLOW : 1);
+  if (e.kind === 'snuffer' && huntLamp(S, e, dt, slow)) return;
+  let tx = BEACON.x;
+  let ty = BEACON.y;
+  let tr = BEACON.r;
   let hero = false;
   if (p.down <= 0 && e.aggro && dist(e.x, e.y, p.x, p.y) < e.aggro) {
     tx = p.x;
@@ -135,11 +143,46 @@ function behave(S, e, dt) {
     hurtPlayer(S, e.dmg);
     return;
   }
-  hurtPlaza(S, e.dmg);
+  hurtBeacon(S, e.dmg);
   if (S.mods.thorns) {
-    arc(S, PLAZA.x, PLAZA.y - 20, e.x, e.y, '#8ff3ff', 2.5);
+    arc(S, BEACON.x, BEACON.y - 20, e.x, e.y, '#8ff3ff', 2.5);
     damageEnemy(S, e, S.mods.thorns, { color: '#8ff3ff', noCharge: true });
   }
+}
+
+/**
+ * A Snuffer walks to the nearest lit lamp and drains it dark (1.6 s), then looks for the next.
+ * With every lamp dark it falls back to the Beacon like any shadow (returns false).
+ */
+function huntLamp(S, e, dt, slow) {
+  let lamp = S.lamps[e.lampId ?? -1];
+  if (!lamp || lamp.power <= 0) {
+    lamp = null;
+    let bd = Infinity;
+    for (const l of S.lamps) {
+      const d = dist(l.x, l.y, e.x, e.y);
+      if (l.power > 0 && d < bd) {
+        bd = d;
+        lamp = l;
+      }
+    }
+    e.lampId = lamp ? lamp.id : -1;
+  }
+  e.snuffing = false;
+  if (!lamp) return false;
+  const dx = lamp.x - e.x;
+  const dy = lamp.y + 6 - e.y;
+  const d = Math.hypot(dx, dy) || 1;
+  e.face = turn(e.face, Math.atan2(dy, dx), dt * 8);
+  if (d > 20) {
+    const w = Math.sin(e.t * 3 + e.id) * 0.35;
+    e.x += ((dx / d) - (dy / d) * w) * e.speed * slow * dt;
+    e.y += ((dy / d) + (dx / d) * w) * e.speed * slow * dt;
+    return true;
+  }
+  e.snuffing = true;
+  drainLamp(S, lamp, dt / 1.6);
+  return true;
 }
 
 function updateThrown(S, e, dt) {
@@ -190,22 +233,29 @@ function separate(S) {
       b.y += (dy / d) * push * wb * 2;
     }
     if (!a.fly && !a.boss) {
-      const d = dist(a.x, a.y, PLAZA.x, PLAZA.y);
-      const min = PLAZA.r + a.r;
+      const d = dist(a.x, a.y, BEACON.x, BEACON.y);
+      const min = BEACON.r + a.r;
       if (d < min && d > 0.01) {
-        a.x = PLAZA.x + ((a.x - PLAZA.x) / d) * min;
-        a.y = PLAZA.y + ((a.y - PLAZA.y) / d) * min;
+        a.x = BEACON.x + ((a.x - BEACON.x) / d) * min;
+        a.y = BEACON.y + ((a.y - BEACON.y) / d) * min;
       }
     }
   }
 }
 
+/** A shadow is banished: score (times the chain), Spark motes, its death burst, Gloop splits. */
 export function handleDeath(S, e) {
   S.kills += 1;
+  if (e.burned) {
+    // Burned by the sunrise: half the score, no chain, no split.
+    S.score += Math.round(e.score * 0.5 * S.diff.score);
+    return;
+  }
   S.combo += 1;
   S.comboT = 3 + S.mods.comboKeep;
   S.maxCombo = Math.max(S.maxCombo, S.combo);
-  S.score += Math.round(e.score * comboMult(S) * S.mods.scoreMul);
+  S.score += Math.round(e.score * comboMult(S) * S.mods.scoreMul * S.diff.score);
+  dropSpark(S, e.x, e.y, SPARK[e.kind] ?? 1);
   burst(S, e.x, e.y, e.color, 14, { speed: 260, life: 0.55, size: 4 });
   burst(S, e.x, e.y, '#140a26', 5, { kind: 'smoke', add: false, speed: 60, life: 0.8, size: 9 });
   ring(S, e.x, e.y, e.color, e.r * 0.5, e.r * 2.3, 0.35, 4);
@@ -218,6 +268,17 @@ export function handleDeath(S, e) {
     }
   }
   if (S.rng() < 0.07 && S.pickups.length < 4) S.pickups.push({ x: e.x, y: e.y, t: 0 });
+}
+
+/** Leaves n Spark as motes that pop out of (x, y); big hoards come in motes of 3. */
+export function dropSpark(S, x, y, n) {
+  while (n > 0) {
+    const v = n >= 6 ? 3 : 1;
+    n -= v;
+    const a = S.rng() * TAU;
+    const sp = 60 + S.rng() * 120;
+    S.motes.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, n: v, t: 0 });
+  }
 }
 
 // ---------------------------------------------------------------- drawing
@@ -238,6 +299,40 @@ export function drawEnemy(ctx, e, t) {
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(14,4,28,0.9)';
   switch (e.kind) {
+    case 'snuffer': {
+      // A hooded lamp-thief carrying a long candle-snuffer pole with a bell at its tip.
+      ctx.strokeStyle = '#4a3e7a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(r * 0.2, r * 0.55);
+      ctx.lineTo(r * 1.9, r * 0.55);
+      ctx.stroke();
+      ctx.fillStyle = e.snuffing ? '#b9a6ff' : '#6d5fb0';
+      ctx.beginPath();
+      ctx.moveTo(r * 1.7, r * 0.55);
+      ctx.lineTo(r * 2.5, r * 0.05);
+      ctx.lineTo(r * 2.5, r * 1.05);
+      ctx.closePath();
+      ctx.fill();
+      if (e.snuffing) glow(ctx, r * 2.3, r * 0.55, r * 1.6, '#8d7bff', 0.7 + Math.sin(t * 18) * 0.2);
+      ctx.beginPath();
+      ctx.moveTo(r * 0.9, 0);
+      ctx.quadraticCurveTo(r * 0.2, -r * 1.1, -r * 1.3, -r * 0.7 + Math.sin(t * 6 + e.id) * 2);
+      ctx.lineTo(-r * 1.0, 0);
+      ctx.lineTo(-r * 1.3, r * 0.7 - Math.sin(t * 6 + e.id) * 2);
+      ctx.quadraticCurveTo(r * 0.2, r * 1.1, r * 0.9, 0);
+      ctx.fillStyle = radial(ctx, r, '#6a5aa8', '#2d2452', '#120c26');
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(160,140,255,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = '#0a0618';
+      ctx.beginPath();
+      ctx.ellipse(r * 0.35, 0, r * 0.5, r * 0.42, 0, 0, TAU);
+      ctx.fill();
+      eyes(ctx, r * 0.55, r * 0.18, r * 0.12, '#b8f6ff');
+      break;
+    }
     case 'grunt': {
       blob(ctx, r, t * 6 + e.id, 0.09);
       ctx.fillStyle = radial(ctx, r, '#c590ff', '#7432b8', '#2c0d50');

@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/best-game-01/ilyayaaa/hero-city-showdown/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 [![reward](https://make.fun/badge/best-game-01/ilyayaaa/hero-city-showdown/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 
-Hero City Showdown is a top-down neon arena brawler where you pick one of six original heroes (Blaze, Volt, Frost, Gale, Mind or Bloom) and defend the City Core in the plaza from 15 waves of monsters pouring in from the dusk-lit streets. Dash through telegraphed boss attacks from a sea kraken, a fire phoenix and a smog titan, charge and unleash your hero's ultimate, and build your run with a choice of three upgrades after every wave.
+Hero City: Blackout is a top-down night-defense brawler: the power is out, and one of six original heroes must guard the plaza's Beacon through 15 nights. The shadow creatures take full damage only inside the golden pools of the 8 street lamps, so you fight in the light, relight the lamps Snuffers put out (hold E, pay Spark), survive three bosses and pick lamp or hero blessings at each dawn until the last sunrise.
 
 ![cover](screenshots/1-cover.jpg)
 

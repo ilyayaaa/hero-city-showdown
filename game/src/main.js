@@ -1,22 +1,24 @@
 // Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps, and
-// the screen is painted at 1280x720 game units scaled to fit the window. Screens: title, hero
-// select, play (with the upgrade choice between waves), paused, and the end screen.
+// the screen is painted at 1280x720 game units scaled to fit the window. Screens: title (with the
+// difficulty choice), hero select, play (with the dawn blessing between nights), paused, and the
+// end screen (dawn victory or darkness defeat).
 //
-// ?seed=N fixes the run. ?shot=cover|boss|upgrade|title (with &seed=N) stages that scene instead
+// ?seed=N fixes the run. ?shot=cover|boss|title|dawn (with &seed=N) stages that scene instead
 // of running the loop, paints it twice and sets window.__shotReady for a screenshot.
 import { H, W } from './combat.js';
 import { HEROES } from './heroes.js';
 import { chooseUpgrade, createWorld, newIntent, stepWorld } from './world.js';
+import { DIFFICULTY } from './night.js';
 import { createInput } from './input.js';
 import { drawWorld } from './render.js';
 import { drawHud } from './hud.js';
-import { cardAt, drawEnd, drawPause, drawSelect, drawTitle, drawUpgrade, selectCard, upgradeCard } from './screens.js';
+import { cardAt, difficultyCard, drawEnd, drawPause, drawSelect, drawTitle, drawUpgrade, selectCard, upgradeCard } from './screens.js';
 import { initAudio, isMuted, setMusic, sfx, toggleMute } from './audio.js';
-import { stageShot } from './shots.js';
+import { menuWorld, stageShot } from './shots.js';
 
 const STEP = 1 / 60;
 const MAX_FRAME = 0.25;
-const BEST_KEY = 'hero-city-showdown.best';
+const BEST_KEY = 'hero-city-blackout.best';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -61,11 +63,11 @@ function saveBest(value) {
   }
 }
 
-const app = { screen: 'title', menu: createWorld(7, 0), S: null, sel: 0, hover: -1, best: readBest(), newBest: false, t: 0 };
+const app = { screen: 'title', menu: menuWorld(), S: null, sel: 0, difficulty: 1, hover: -1, best: readBest(), newBest: false, t: 0 };
 
 function paint() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#05030c';
+  ctx.fillStyle = '#03050f';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(view.scale, 0, 0, view.scale, view.ox, view.oy);
   ctx.save();
@@ -75,8 +77,8 @@ function paint() {
   const sc = app.screen;
   if (sc === 'title' || sc === 'select') {
     drawWorld(ctx, app.menu, { noHero: true });
-    if (sc === 'title') drawTitle(ctx, app.t, app.best);
-    else drawSelect(ctx, app.t, app.sel);
+    if (sc === 'title') drawTitle(ctx, app.t, app.best, app.difficulty);
+    else drawSelect(ctx, app.t, app.sel, app.difficulty);
   } else {
     const S = app.S;
     drawWorld(ctx, S);
@@ -117,7 +119,7 @@ function runGame() {
 
   function start(i) {
     app.sel = i;
-    app.S = createWorld(fixedSeed ?? Math.floor(Math.random() * 4294967296), i);
+    app.S = createWorld(fixedSeed ?? Math.floor(Math.random() * 4294967296), i, app.difficulty);
     app.S.sfx = sfx;
     app.screen = 'play';
     app.newBest = false;
@@ -126,7 +128,7 @@ function runGame() {
     Object.assign(intent, newIntent());
     sfx('select');
     setMusic('fight');
-    announce(`${HEROES[i].name} defends the city. Wave 1.`);
+    announce(`${HEROES[i].name} guards the Beacon. Night 1.`);
   }
 
   function end() {
@@ -139,15 +141,21 @@ function runGame() {
     }
     sfx(S.result === 'victory' ? 'victory' : 'gameover');
     setMusic('menu');
-    announce(`${S.result === 'victory' ? 'Victory' : 'Game over'}. Score ${S.score}. Best ${app.best}. Press R to play again.`);
+    announce(`${S.result === 'victory' ? 'Dawn breaks: victory' : 'The Beacon went dark'}. Score ${S.score}. Best ${app.best}. Press R to play again.`);
   }
 
   function pick(i) {
     if (chooseUpgrade(app.S, i)) {
       sfx('pick');
       app.hover = -1;
-      announce(`Upgrade chosen. Wave ${app.S.wave}.`);
+      announce(`Blessing chosen. Night ${app.S.night}.`);
     }
+  }
+
+  function setDifficulty(i) {
+    app.difficulty = (i + DIFFICULTY.length) % DIFFICULTY.length;
+    sfx('ui');
+    announce(`Difficulty ${DIFFICULTY[app.difficulty].name}.`);
   }
 
   function handle(codes) {
@@ -159,13 +167,19 @@ function runGame() {
       }
       const digit = c.startsWith('Digit') ? Number(c.slice(5)) : c.startsWith('Numpad') ? Number(c.slice(6)) : 0;
       switch (app.screen) {
-        case 'title':
-          if (c === 'Enter' || c === 'Space' || c === 'Mouse0') {
+        case 'title': {
+          const di = c === 'Mouse0' ? cardAt(difficultyCard, DIFFICULTY.length, m.x, m.y) : -1;
+          if (di >= 0) setDifficulty(di);
+          else if (c === 'ArrowLeft' || c === 'KeyA') setDifficulty(app.difficulty - 1);
+          else if (c === 'ArrowRight' || c === 'KeyD') setDifficulty(app.difficulty + 1);
+          else if (digit >= 1 && digit <= 3) setDifficulty(digit - 1);
+          else if (c === 'Enter' || c === 'Space' || c === 'Mouse0') {
             app.screen = 'select';
             sfx('ui');
             announce('Choose your hero: press 1 to 6.');
           }
           break;
+        }
         case 'select': {
           if (digit >= 1 && digit <= HEROES.length) start(digit - 1);
           else if (c === 'ArrowLeft' || c === 'KeyA') {
@@ -193,7 +207,7 @@ function runGame() {
               const i = cardAt(upgradeCard, 3, m.x, m.y);
               if (i >= 0) pick(i);
             }
-          } else if (c === 'KeyE') intent.ult = true;
+          } else if (c === 'KeyQ') intent.ult = true;
           else if (c === 'Space' || c === 'Mouse2' || c === 'ShiftLeft') intent.dash = true;
           break;
         }
@@ -209,6 +223,7 @@ function runGame() {
         case 'over':
           if (c === 'KeyR' || c === 'Mouse0' || c === 'Enter') start(app.sel);
           else if (c === 'KeyH') app.screen = 'select';
+          else if (c === 'KeyT') app.screen = 'title';
           break;
         default:
       }
@@ -249,6 +264,7 @@ function runGame() {
         intent.ax = m.x;
         intent.ay = m.y;
         intent.fire = m.left && S.phase !== 'upgrade';
+        intent.relight = input.held('KeyE');
         stepWorld(S, STEP, intent);
         acc -= STEP;
       }
@@ -267,7 +283,7 @@ function runGame() {
     }
   });
 
-  announce('Hero City Showdown. Press Enter or click to start.');
+  announce('Hero City: Blackout. Choose a difficulty with the arrow keys, then press Enter or click.');
   requestAnimationFrame(frame);
 }
 

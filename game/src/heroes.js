@@ -1,44 +1,44 @@
 // The six heroes: who they are, their basic attack, their ultimate (and the lingering "zones" an
 // ultimate leaves in the world), what a projectile does on hit, and how heroes and their shots
 // are drawn.
-import { PLAZA, TAU, W, H, aoe, chainLightning, clamp, damageEnemy, dist, healPlaza } from './combat.js';
+import { BEACON, TAU, W, H, aoe, chainLightning, clamp, damageEnemy, dist, healBeacon } from './combat.js';
 import { addText, arc, burst, flash, glow, hexA, ring, shake } from './particles.js';
 
 export const HEROES = [
   {
     id: 'blaze', name: 'BLAZE', role: 'Fire Brawler', color: '#ff7a2e', light: '#ffd66b', dark: '#7c1d06',
-    basic: 'Fireballs explode on impact and set monsters ablaze.',
+    basic: 'Fireballs explode on impact and set shadows ablaze.',
     ult: 'INFERNO NOVA', ultDesc: 'A blazing shockwave scorches everything around you.',
     hp: 120, speed: 255, rate: 0.33, bars: [5, 3, 2],
   },
   {
     id: 'volt', name: 'VOLT', role: 'Storm Striker', color: '#ffe94a', light: '#fffbd8', dark: '#6e5200',
-    basic: 'Rapid bolts that chain to two nearby monsters.',
-    ult: 'THUNDERSTORM', ultDesc: 'Lightning rains on every monster around you.',
+    basic: 'Rapid bolts that chain to two nearby shadows.',
+    ult: 'THUNDERSTORM', ultDesc: 'Lightning rains on every shadow around you.',
     hp: 95, speed: 285, rate: 0.2, bars: [4, 5, 2],
   },
   {
     id: 'frost', name: 'FROST', role: 'Ice Warden', color: '#6fe6ff', light: '#e6fcff', dark: '#0b4870',
-    basic: 'Piercing ice shards slow monsters down.',
-    ult: 'ABSOLUTE ZERO', ultDesc: 'Freeze every monster nearby. Frozen foes take +50% damage.',
+    basic: 'Piercing ice shards slow shadows down.',
+    ult: 'ABSOLUTE ZERO', ultDesc: 'Freeze every shadow nearby. Frozen foes take +50% damage.',
     hp: 110, speed: 250, rate: 0.27, bars: [3, 3, 4],
   },
   {
     id: 'gale', name: 'GALE', role: 'Wind Dancer', color: '#6dffbe', light: '#e6fff4', dark: '#0b6646',
     basic: 'Wide wind blades cut through crowds and push them back.',
-    ult: 'CYCLONE', ultDesc: 'A tornado follows your aim, sucking monsters in.',
+    ult: 'CYCLONE', ultDesc: 'A tornado follows your aim, sucking shadows in.',
     hp: 100, speed: 300, rate: 0.32, bars: [3, 5, 3],
   },
   {
     id: 'mind', name: 'MIND', role: 'Telekinetic', color: '#c77dff', light: '#f3dfff', dark: '#45137a',
-    basic: 'Homing psychic orbs that hunt monsters down.',
-    ult: 'MIND HURL', ultDesc: 'Lift the monsters at your aim and hurl them like missiles.',
+    basic: 'Homing psychic orbs that hunt shadows down.',
+    ult: 'MIND HURL', ultDesc: 'Lift the shadows at your aim and hurl them like missiles.',
     hp: 100, speed: 260, rate: 0.3, bars: [4, 3, 3],
   },
   {
     id: 'bloom', name: 'BLOOM', role: 'City Healer', color: '#7dff6e', light: '#f0ffe0', dark: '#1b6418', accent: '#ff7ad9',
-    basic: 'Seed shots heal the City Core with every hit.',
-    ult: 'SANCTUARY', ultDesc: 'Restore the City Core and grow a garden that hurts monsters.',
+    basic: 'Seed shots heal the Beacon with every hit.',
+    ult: 'SANCTUARY', ultDesc: 'Restore the Beacon and grow a garden that hurts shadows.',
     hp: 115, speed: 265, rate: 0.25, bars: [2, 3, 5],
   },
 ];
@@ -101,7 +101,7 @@ export function onShotHit(S, s, e) {
   }
   if (s.chain) chainLightning(S, e, s.chain, s.dmg * 0.6, s.color);
   if (s.heal) {
-    healPlaza(S, s.heal);
+    healBeacon(S, s.heal);
     burst(S, e.x, e.y - 8, '#8dff7a', 1, { kind: 'plus', speed: 30, vy: -50, life: 0.7, size: 5, drag: 1 });
   }
   if (s.src !== 'hero') return;
@@ -164,12 +164,12 @@ export function heroUltimate(S) {
       break;
     }
     case 'bloom': {
-      healPlaza(S, S.plaza.max * 0.3 * pw);
+      healBeacon(S, S.beacon.max * 0.3 * pw);
       p.hp = p.maxHp;
-      S.zones.push({ type: 'garden', x: PLAZA.x, y: PLAZA.y, t: 0, dur: 7, r: 270 * pw, tick: 0, pw });
-      burst(S, PLAZA.x, PLAZA.y, '#8dff7a', 30, { kind: 'plus', speed: 260, life: 1.1, size: 7, drag: 2 });
-      burst(S, PLAZA.x, PLAZA.y, '#ff8ade', 30, { kind: 'petal', speed: 320, life: 1.2, size: 6, drag: 2 });
-      addText(S, PLAZA.x, PLAZA.y - 70, `+${Math.round(S.plaza.max * 0.3 * pw)}`, '#8dff7a', 28, true);
+      S.zones.push({ type: 'garden', x: BEACON.x, y: BEACON.y, t: 0, dur: 7, r: 270 * pw, tick: 0, pw });
+      burst(S, BEACON.x, BEACON.y, '#8dff7a', 30, { kind: 'plus', speed: 260, life: 1.1, size: 7, drag: 2 });
+      burst(S, BEACON.x, BEACON.y, '#ff8ade', 30, { kind: 'petal', speed: 320, life: 1.2, size: 6, drag: 2 });
+      addText(S, BEACON.x, BEACON.y - 70, `+${Math.round(S.beacon.max * 0.3 * pw)}`, '#8dff7a', 28, true);
       break;
     }
     default:
@@ -312,7 +312,7 @@ export function updateZones(S, dt) {
           e.slowT = 0.4;
           e.slowAmt = Math.max(e.slowAmt, 0.35);
         }
-        healPlaza(S, 5 * z.pw);
+        healBeacon(S, 5 * z.pw);
         if (p.down <= 0 && dist(p.x, p.y, z.x, z.y) < z.r) p.hp = Math.min(p.maxHp, p.hp + 3);
         for (let i = 0; i < 3; i += 1) {
           const a = S.rng() * TAU;
@@ -938,7 +938,7 @@ export function drawShot(ctx, s, t) {
   ctx.restore();
 }
 
-/** Ultimate effects: `under` is drawn on the ground below monsters, the rest above them. */
+/** Ultimate effects: `under` is drawn on the ground below shadows, the rest above them. */
 export function drawZones(ctx, S, under) {
   for (const z of S.zones) {
     const k = z.t / z.dur;

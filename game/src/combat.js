@@ -1,13 +1,19 @@
-// Shared rules every system leans on: the arena layout (screen, City Core, building blocks),
-// damage to monsters, to the hero and to the City Core, area hits, chain lightning and
-// nearest-target queries.
+// Shared rules every system leans on: the arena layout (screen, Beacon, building blocks),
+// damage to shadows (shrouded or revealed), to the hero and to the Beacon (warded by lit
+// lamps), area hits, chain lightning and nearest-target queries.
 import { addText, arc, burst, shake } from './particles.js';
+
+/** Damage a shadow outside every light takes (bosses keep a little more: their bulk catches stray light). */
+export const SHROUD_MUL = 0.3;
+export const BOSS_SHROUD_MUL = 0.5;
+/** Extra damage a revealed shadow takes per Searing Light upgrade. */
+export const SEAR_PER_LEVEL = 0.25;
 
 export const W = 1280;
 export const H = 720;
 export const TAU = Math.PI * 2;
-/** The City Core at the heart of the plaza: monsters want it, the hero defends it. */
-export const PLAZA = { x: 640, y: 384, r: 44 };
+/** The Beacon at the heart of the plaza: monsters want it, the hero defends it. */
+export const BEACON = { x: 640, y: 384, r: 44 };
 /** Building blocks in the four corners: walls for the hero and ground monsters. */
 export const BUILDINGS = [
   { x: 0, y: 0, w: 300, h: 200 },
@@ -82,6 +88,9 @@ export function damageEnemy(S, e, amount, o = {}) {
     crit = true;
   }
   if (e.frozenT > 0) d *= 1.5;
+  // The blackout's rule: shadows outside the light shrug off most of every hit.
+  if (!e.lit) d *= e.boss ? BOSS_SHROUD_MUL : SHROUD_MUL;
+  else if (S.mods.sear) d *= 1 + S.mods.sear * SEAR_PER_LEVEL;
   e.hp -= d;
   e.flash = 0.1;
   const p = S.player;
@@ -94,7 +103,8 @@ export function damageEnemy(S, e, amount, o = {}) {
   // Ultimates hit dozens of monsters at once: only some of those hits get a number, so it stays readable.
   const showNumber = !o.noCharge || crit || S.rng() < 0.3;
   if (!o.quiet && showNumber) {
-    addText(S,e.x + (S.rng() - 0.5) * 16, e.y - e.r - 6, Math.round(d), crit ? '#ffe45c' : '#ffffff', crit ? 22 : 15, crit);
+    const color = crit ? '#ffe45c' : e.lit ? '#ffffff' : '#9c8cd8';
+    addText(S, e.x + (S.rng() - 0.5) * 16, e.y - e.r - 6, Math.round(d), color, crit ? 22 : e.lit ? 15 : 12, crit);
   }
   if (!o.quiet) {
     S.sfx('hit');
@@ -154,7 +164,8 @@ export function chainLightning(S, from, n, dmg, color) {
 
 export function hurtPlayer(S, d) {
   const p = S.player;
-  if (p.down > 0 || p.inv > 0 || p.dashT > 0 || S.phase === 'upgrade') return false;
+  if (p.down > 0 || p.inv > 0 || p.dashT > 0 || S.phase === 'upgrade' || S.phase === 'dawn') return false;
+  d *= S.diff.dmg;
   p.hp -= d;
   p.inv = 0.45;
   p.hurtT = 0.3;
@@ -174,12 +185,14 @@ export function hurtPlayer(S, d) {
   return true;
 }
 
-export function hurtPlaza(S, d) {
-  if (S.result) return;
-  const z = S.plaza;
+/** The Beacon takes a hit, softened by every lit lamp around it (S.wardMul, set by lamps.js). */
+export function hurtBeacon(S, d) {
+  if (S.result || S.phase === 'dawn') return;
+  const z = S.beacon;
+  d *= S.diff.dmg * S.wardMul;
   z.hp = Math.max(0, z.hp - d);
   z.hitT = 0.25;
-  S.stats.coreDamage += d;
+  S.stats.beaconDamage += d;
   if (S.time - z.lastSfx > 0.25) {
     z.lastSfx = S.time;
     S.sfx('core');
@@ -188,8 +201,8 @@ export function hurtPlaza(S, d) {
   if (z.hp <= 0) S.result = 'defeat';
 }
 
-export function healPlaza(S, amount) {
-  const z = S.plaza;
+export function healBeacon(S, amount) {
+  const z = S.beacon;
   if (z.hp >= z.max || amount <= 0) return;
   z.hp = Math.min(z.max, z.hp + amount);
   z.healT = 0.4;

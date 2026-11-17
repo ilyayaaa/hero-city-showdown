@@ -1,11 +1,14 @@
-// Painting the world: the dusk city (pre-rendered once: streets, roundabout plaza, rooftops,
-// neon signs, street lamps), the City Core, then everything alive in the right order, and the
-// screen-wide light (vignette, flashes, low-health pulse).
-import { BUILDINGS, H, PLAZA, TAU, W } from './combat.js';
+// Painting the world: the blacked-out city (pre-rendered once: streets, roundabout plaza,
+// rooftops, dead neon signs), the light pools and lamp posts, the Beacon, everything alive in the
+// right order, then the night laid over it with the lights cut out (lighting.js), and on top the
+// things that must read in the dark: the hero, shrouded eyes, shots, telegraphs, numbers.
+import { BUILDINGS, H, BEACON, TAU, W } from './combat.js';
 import { createRandom } from './random.js';
 import { drawHero, drawShot, drawZones } from './heroes.js';
 import { drawEnemy } from './enemies.js';
 import { drawBoss, drawBossFx, drawHazards, drawTele } from './bosses.js';
+import { beaconRadius } from './lamps.js';
+import { drawDarkness, drawLampHeads, drawLampPosts, drawLightPools, drawMotes, drawShrouds, drawSunrise } from './lighting.js';
 import { FONT, drawArcs, drawParts, drawTexts, glow, hexA } from './particles.js';
 
 const M = 32;
@@ -22,10 +25,9 @@ export function drawWorld(ctx, S, o = {}) {
   ctx.save();
   ctx.translate(sx, sy);
   ctx.drawImage(bg, -M, -M);
-  drawLights(ctx, t);
+  drawLightPools(ctx, S);
   drawZones(ctx, S, true);
-  drawHazards(ctx, S);
-  drawTele(ctx, S);
+  drawLampPosts(ctx, S);
   for (const pk of S.pickups) {
     const y = pk.y - 6 + Math.sin(pk.t * 5) * 3;
     glow(ctx, pk.x, y, 26, '#7dff6e', 0.8);
@@ -33,42 +35,50 @@ export function drawWorld(ctx, S, o = {}) {
     ctx.fillRect(pk.x - 6, y - 2, 12, 4);
     ctx.fillRect(pk.x - 2, y - 6, 4, 12);
   }
-  drawCore(ctx, S);
+  drawBeacon(ctx, S);
   for (const a of S.allies) drawTurret(ctx, a, t);
   const p = S.player;
   const ground = S.enemies.filter((e) => !e.fly && e.lift <= 0 && !e.grabbed && !e.thrown && !(e.boss && e.kind === 'kraken'));
   const kraken = S.enemies.find((e) => e.kind === 'kraken');
   if (kraken) drawBoss(ctx, kraken, t);
   const order = ground.map((e) => [e.y, e]);
-  if (p.down <= 0 && !o.noHero) order.push([p.y, null]);
   order.sort((a, b) => a[0] - b[0]);
+  for (const [, e] of order) {
+    if (e.boss) drawBoss(ctx, e, t);
+    else drawEnemy(ctx, e, t);
+  }
+  for (const e of S.enemies) {
+    if (e.kind === 'kraken' || !(e.fly || e.lift > 0 || e.grabbed || e.thrown)) continue;
+    if (e.boss) drawBoss(ctx, e, t);
+    else drawEnemy(ctx, e, t);
+  }
+  // The night falls over everything above; what follows must read in the dark.
+  drawDarkness(ctx, S);
+  drawShrouds(ctx, S);
+  drawLampHeads(ctx, S);
+  drawHazards(ctx, S);
+  drawTele(ctx, S);
   if (o.noHero) S.ghosts.length = 0;
   for (const g of S.ghosts) drawHero(ctx, S.hero, g.x, g.y, g.a, t, { alpha: 0.35 * (1 - g.t / 0.25), scale: 1.15 });
-  for (const [, e] of order) {
-    if (e === null) {
-      const blink = p.inv > 0 && p.dashT <= 0 && Math.sin(t * 40) > 0;
-      drawHero(ctx, S.hero, p.x, p.y, p.aim, t, { moving: p.moving, fire: Math.max(0, p.fireT) * 8, alpha: blink ? 0.45 : 1, scale: 1.15 });
-      if (p.hurtT > 0) glow(ctx, p.x, p.y, 40, '#ff3355', p.hurtT * 2);
-    } else if (e.boss) drawBoss(ctx, e, t);
-    else drawEnemy(ctx, e, t);
+  if (p.down <= 0 && !o.noHero) {
+    glow(ctx, p.x, p.y + 4, 44, S.hero.color, 0.28);
+    const blink = p.inv > 0 && p.dashT <= 0 && Math.sin(t * 40) > 0;
+    drawHero(ctx, S.hero, p.x, p.y, p.aim, t, { moving: p.moving, fire: Math.max(0, p.fireT) * 8, alpha: blink ? 0.45 : 1, scale: 1.15 });
+    if (p.hurtT > 0) glow(ctx, p.x, p.y, 40, '#ff3355', p.hurtT * 2);
   }
   if (p.down > 0) {
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = `900 16px ${FONT}`;
     ctx.fillStyle = '#ff8a9a';
-    ctx.fillText(`RESPAWN ${Math.ceil(p.down)}`, PLAZA.x, PLAZA.y + 92);
+    ctx.fillText(`RESPAWN ${Math.ceil(p.down)}`, BEACON.x, BEACON.y + 92);
     ctx.restore();
   }
   for (const s of S.shots) drawShot(ctx, s, t);
   for (const f of S.foes) drawFoe(ctx, f, t);
   drawBossFx(ctx, S);
-  for (const e of S.enemies) {
-    if (e.kind === 'kraken' || !(e.fly || e.lift > 0 || e.grabbed || e.thrown)) continue;
-    if (e.boss) drawBoss(ctx, e, t);
-    else drawEnemy(ctx, e, t);
-  }
   drawZones(ctx, S, false);
+  drawMotes(ctx, S);
   if (S.mods.drones && p.down <= 0) {
     for (let i = 0; i < S.mods.drones; i += 1) {
       const a = S.droneA + (i / S.mods.drones) * TAU;
@@ -93,6 +103,7 @@ export function drawWorld(ctx, S, o = {}) {
   drawArcs(ctx, S);
   drawTexts(ctx, S);
   ctx.restore();
+  drawSunrise(ctx, S);
   ctx.drawImage(vignette, 0, 0);
   if (S.flashA > 0) {
     ctx.save();
@@ -102,7 +113,7 @@ export function drawWorld(ctx, S, o = {}) {
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
-  const low = p.down > 0 ? 1 : p.hp / p.maxHp < 0.3 ? 0.6 : S.plaza.hp / S.plaza.max < 0.25 ? 0.45 : 0;
+  const low = p.down > 0 ? 1 : p.hp / p.maxHp < 0.3 ? 0.6 : S.beacon.hp / S.beacon.max < 0.25 ? 0.45 : 0;
   if (low) {
     ctx.save();
     ctx.globalAlpha = low * (0.5 + Math.sin(t * 6) * 0.3);
@@ -162,79 +173,101 @@ function drawTurret(ctx, a, t) {
   ctx.restore();
 }
 
-function drawCore(ctx, S) {
-  const z = S.plaza;
-  const k = z.hp / z.max;
+/** The Beacon: a stone lantern on an octagonal plinth, its flame and HP ring fading as it is hurt. */
+function drawBeacon(ctx, S) {
+  const z = S.beacon;
+  const k = Math.max(0, z.hp / z.max);
   const t = S.time;
-  const col = k > 0.5 ? '#5ef2ff' : k > 0.25 ? '#ffd23f' : '#ff4d6a';
-  const { x, y } = PLAZA;
+  const col = k > 0.5 ? '#ffd36b' : k > 0.25 ? '#ff9a3c' : '#ff5a6e';
+  const { x, y } = BEACON;
   ctx.save();
-  glow(ctx, x, y - 10, 150, col, 0.35 + Math.sin(t * 2) * 0.05);
-  ctx.fillStyle = '#2a2147';
-  ctx.strokeStyle = hexA(col, 0.9);
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  for (let i = 0; i < 6; i += 1) {
-    const a = (i / 6) * TAU + Math.PI / 6;
-    ctx.lineTo(x + Math.cos(a) * 40, y + Math.sin(a) * 30 + 6);
+  // Slow rays turning around the lantern, as long as its light reaches.
+  const reach = beaconRadius(S);
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 12; i += 1) {
+    const a = t * 0.25 + (i / 12) * TAU;
+    const g = ctx.createLinearGradient(x, y - 24, x + Math.cos(a) * reach, y - 24 + Math.sin(a) * reach);
+    g.addColorStop(0, hexA(col, 0.16 * k + 0.05));
+    g.addColorStop(1, hexA(col, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 24);
+    ctx.lineTo(x + Math.cos(a - 0.07) * reach, y - 24 + Math.sin(a - 0.07) * reach);
+    ctx.lineTo(x + Math.cos(a + 0.07) * reach, y - 24 + Math.sin(a + 0.07) * reach);
+    ctx.closePath();
+    ctx.fill();
   }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = 'rgba(10,6,24,0.8)';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.beginPath();
-  ctx.ellipse(x, y + 6, 54, 42, 0, 0, TAU);
+  ctx.ellipse(x + 6, y + 14, 50, 30, 0, 0, TAU);
+  ctx.fill();
+  const plinth = (r, ry, dy, fill, stroke) => {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * TAU + Math.PI / 8;
+      ctx.lineTo(x + Math.cos(a) * r, y + dy + Math.sin(a) * ry);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  };
+  plinth(44, 32, 10, '#1b2448', '#4b5a96');
+  plinth(32, 23, 2, '#26325e', '#c9a24a');
+  // HP ring around the plinth.
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(6,8,24,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 8, 56, 40, 0, 0, TAU);
   ctx.stroke();
   ctx.strokeStyle = col;
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.ellipse(x, y + 6, 54, 42, 0, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+  ctx.ellipse(x, y + 8, 56, 40, 0, -Math.PI / 2, -Math.PI / 2 + TAU * k);
   ctx.stroke();
-  for (let i = 0; i < 3; i += 1) {
-    const a = t * 1.6 + (i / 3) * TAU;
-    glow(ctx, x + Math.cos(a) * 54, y + 6 + Math.sin(a) * 42, 12, col, 0.9);
-  }
-  const bob = Math.sin(t * 2.4) * 4;
-  const cy = y - 22 + bob;
-  const g = ctx.createLinearGradient(x - 18, cy - 30, x + 18, cy + 24);
-  g.addColorStop(0, '#ffffff');
-  g.addColorStop(0.45, col);
-  g.addColorStop(1, hexA(col, 0.4));
-  ctx.fillStyle = g;
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.5;
+  // The lantern: posts, a cap and the flame inside.
+  ctx.fillStyle = '#121a36';
+  ctx.strokeStyle = '#d8b25a';
+  ctx.lineWidth = 2;
+  ctx.fillRect(x - 15, y - 38, 30, 36);
+  ctx.strokeRect(x - 15, y - 38, 30, 36);
+  const flame = 0.75 + 0.25 * k + Math.sin(t * 9) * 0.05;
+  glow(ctx, x, y - 22, 70 * (0.5 + k * 0.5), col, 0.9);
+  ctx.fillStyle = hexA(col, 0.35);
+  ctx.fillRect(x - 13, y - 36, 26, 32);
+  const fg = ctx.createLinearGradient(x, y - 40, x, y - 6);
+  fg.addColorStop(0, '#ffffff');
+  fg.addColorStop(0.5, '#fff1b8');
+  fg.addColorStop(1, col);
+  ctx.fillStyle = fg;
   ctx.beginPath();
-  ctx.moveTo(x, cy - 34);
-  ctx.lineTo(x + 17, cy - 6);
-  ctx.lineTo(x, cy + 22);
-  ctx.lineTo(x - 17, cy - 6);
+  ctx.moveTo(x, y - 36 * flame - 2);
+  ctx.quadraticCurveTo(x + 10, y - 16, x, y - 7);
+  ctx.quadraticCurveTo(x - 10, y - 16, x, y - 36 * flame - 2);
+  ctx.fill();
+  ctx.strokeStyle = '#d8b25a';
+  ctx.beginPath();
+  ctx.moveTo(x - 4, y - 38);
+  ctx.lineTo(x - 4, y - 2);
+  ctx.moveTo(x + 4, y - 38);
+  ctx.lineTo(x + 4, y - 2);
+  ctx.stroke();
+  ctx.fillStyle = '#2b3566';
+  ctx.beginPath();
+  ctx.moveTo(x - 21, y - 38);
+  ctx.lineTo(x, y - 54);
+  ctx.lineTo(x + 21, y - 38);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.beginPath();
-  ctx.moveTo(x, cy - 34);
-  ctx.lineTo(x, cy + 22);
-  ctx.moveTo(x - 17, cy - 6);
-  ctx.lineTo(x + 17, cy - 6);
-  ctx.stroke();
-  glow(ctx, x, cy - 6, 50, col, 0.8);
-  if (z.hitT > 0) glow(ctx, x, cy, 90, '#ff3355', z.hitT * 3);
-  if (z.healT > 0) glow(ctx, x, cy, 90, '#7dff6e', z.healT * 2);
+  glow(ctx, x, y - 22, 26, '#ffffff', 0.6 * k + 0.2);
+  if (z.hitT > 0) glow(ctx, x, y - 20, 90, '#ff3355', z.hitT * 3);
+  if (z.healT > 0) glow(ctx, x, y - 20, 90, '#7dff6e', z.healT * 2);
   ctx.restore();
 }
-
-/** Lamp and neon glows that breathe a little over the static city. */
-function drawLights(ctx, t) {
-  for (const [x, y, c, r] of LIGHTS) glow(ctx, x, y, r, c, 0.16 + Math.sin(t * 1.3 + x) * 0.03);
-}
-
-const LIGHTS = [
-  [360, 300, '#ffcf7a', 90], [920, 300, '#ffcf7a', 90], [360, 470, '#ffcf7a', 90], [920, 470, '#ffcf7a', 90],
-  [550, 120, '#ffcf7a', 80], [730, 120, '#ffcf7a', 80], [550, 640, '#ffcf7a', 80], [730, 640, '#ffcf7a', 80],
-  [90, 240, '#ff4fb0', 120], [1190, 240, '#33e6ff', 120], [150, 540, '#ff4fb0', 100], [1130, 540, '#ffd23f', 100],
-];
 
 function buildVignette() {
   const c = document.createElement('canvas');
@@ -242,14 +275,14 @@ function buildVignette() {
   c.height = H;
   const g = c.getContext('2d');
   const top = g.createLinearGradient(0, 0, 0, H);
-  top.addColorStop(0, 'rgba(255,110,80,0.07)');
+  top.addColorStop(0, 'rgba(40,70,160,0.08)');
   top.addColorStop(0.5, 'rgba(0,0,0,0)');
-  top.addColorStop(1, 'rgba(60,10,110,0.12)');
+  top.addColorStop(1, 'rgba(10,20,70,0.14)');
   g.fillStyle = top;
   g.fillRect(0, 0, W, H);
   const v = g.createRadialGradient(W / 2, H / 2, H * 0.38, W / 2, H / 2, W * 0.72);
-  v.addColorStop(0, 'rgba(6,2,18,0)');
-  v.addColorStop(1, 'rgba(6,2,18,0.6)');
+  v.addColorStop(0, 'rgba(2,4,16,0)');
+  v.addColorStop(1, 'rgba(2,4,16,0.62)');
   g.fillStyle = v;
   g.fillRect(0, 0, W, H);
   return c;
@@ -282,13 +315,13 @@ function buildBackground() {
   g.fillRect(-M, 318, W + M * 2, 132);
   g.fillRect(574, -M, 132, H + M * 2);
   g.beginPath();
-  g.arc(PLAZA.x, PLAZA.y, 205, 0, TAU);
+  g.arc(BEACON.x, BEACON.y, 205, 0, TAU);
   g.fill();
   for (let i = 0; i < 1500; i += 1) {
     g.fillStyle = 'rgba(255,255,255,0.025)';
     const a = rnd() * TAU;
     const r = rnd() * 205;
-    g.fillRect(PLAZA.x + Math.cos(a) * r, PLAZA.y + Math.sin(a) * r, 2, 2);
+    g.fillRect(BEACON.x + Math.cos(a) * r, BEACON.y + Math.sin(a) * r, 2, 2);
   }
   g.strokeStyle = '#3d3264';
   g.lineWidth = 3;
@@ -303,7 +336,7 @@ function buildBackground() {
   line(g, 640, 605, 640, H + M);
   g.strokeStyle = 'rgba(255,255,255,0.22)';
   g.beginPath();
-  g.arc(PLAZA.x, PLAZA.y, 168, 0, TAU);
+  g.arc(BEACON.x, BEACON.y, 168, 0, TAU);
   g.stroke();
   g.setLineDash([]);
   g.fillStyle = 'rgba(235,230,255,0.22)';
@@ -316,7 +349,7 @@ function buildBackground() {
   // the plaza island
   g.fillStyle = '#2c2350';
   g.beginPath();
-  g.arc(PLAZA.x, PLAZA.y, 132, 0, TAU);
+  g.arc(BEACON.x, BEACON.y, 132, 0, TAU);
   g.fill();
   g.strokeStyle = '#c9a24a';
   g.globalAlpha = 0.55;
@@ -327,12 +360,12 @@ function buildBackground() {
   g.lineWidth = 2;
   for (const r of [62, 92, 118]) {
     g.beginPath();
-    g.arc(PLAZA.x, PLAZA.y, r, 0, TAU);
+    g.arc(BEACON.x, BEACON.y, r, 0, TAU);
     g.stroke();
   }
   for (let i = 0; i < 24; i += 1) {
     const a = (i / 24) * TAU;
-    line(g, PLAZA.x + Math.cos(a) * 62, PLAZA.y + Math.sin(a) * 62, PLAZA.x + Math.cos(a) * 130, PLAZA.y + Math.sin(a) * 130);
+    line(g, BEACON.x + Math.cos(a) * 62, BEACON.y + Math.sin(a) * 62, BEACON.x + Math.cos(a) * 130, BEACON.y + Math.sin(a) * 130);
   }
   g.fillStyle = '#3a2d6a';
   g.strokeStyle = '#6b58b0';
@@ -340,14 +373,14 @@ function buildBackground() {
   for (let i = 0; i < 16; i += 1) {
     const a = (i / 16) * TAU - Math.PI / 2;
     const r = i % 2 ? 30 : 62;
-    g.lineTo(PLAZA.x + Math.cos(a) * r, PLAZA.y + Math.sin(a) * r);
+    g.lineTo(BEACON.x + Math.cos(a) * r, BEACON.y + Math.sin(a) * r);
   }
   g.closePath();
   g.fill();
   g.stroke();
   for (let i = 0; i < 4; i += 1) {
     const a = (i / 4) * TAU + Math.PI / 4;
-    planter(g, PLAZA.x + Math.cos(a) * 100, PLAZA.y + Math.sin(a) * 100, rnd);
+    planter(g, BEACON.x + Math.cos(a) * 100, BEACON.y + Math.sin(a) * 100, rnd);
   }
   // sidewalks around the blocks
   for (const b of BUILDINGS) {
@@ -360,7 +393,6 @@ function buildBackground() {
   // street furniture
   for (const [x, y] of [[330, 250], [520, 255], [760, 255], [950, 250], [330, 515], [520, 512], [760, 512], [950, 515], [420, 90], [860, 90], [420, 660], [860, 660]]) tree(g, x, y, rnd);
   for (const [x, y, a, col] of [[70, 340, 0, '#ff4f7b'], [190, 426, Math.PI, '#4fd0ff'], [1220, 340, 0, '#ffd23f'], [1090, 428, Math.PI, '#b06bff'], [596, 40, Math.PI / 2, '#5effa0'], [684, 680, -Math.PI / 2, '#ff8a3c']]) car(g, x, y, a, col);
-  for (const [x, y] of [[360, 300], [920, 300], [360, 470], [920, 470], [550, 120], [730, 120], [550, 640], [730, 640]]) lamp(g, x, y);
   // buildings
   building(g, { x: -M, y: -M, w: 170 + M, h: 200 + M, roof: '#2e2549', face: 46, sign: ['HOTEL', '#ff4fb0'], feat: 'tank' }, rnd);
   building(g, { x: 170, y: -M, w: 130, h: 200 + M, roof: '#362a54', face: 30, sign: ['RAMEN', '#33e6ff'], feat: 'garden' }, rnd);
@@ -370,6 +402,12 @@ function buildBackground() {
   building(g, { x: 165, y: 566, w: 135, h: 154 + M, roof: '#30284f', face: 0, sign: ['24/7', '#ff4fb0'], feat: 'ac' }, rnd);
   building(g, { x: 980, y: 566, w: 150, h: 154 + M, roof: '#28304f', face: 0, sign: ['CAFE', '#5effa0'], feat: 'tank' }, rnd);
   building(g, { x: 1130, y: 566, w: 150 + M, h: 154 + M, roof: '#352649', face: 0, feat: 'pool' }, rnd);
+  // The blackout: the whole city sinks into night blue (the lamps and the Beacon bring the gold back).
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'multiply';
+  g.fillStyle = '#5f7ff0';
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = 'source-over';
   return c;
 }
 
@@ -454,21 +492,6 @@ function car(g, x, y, a, col) {
   g.restore();
 }
 
-function lamp(g, x, y) {
-  g.fillStyle = 'rgba(0,0,0,0.4)';
-  g.beginPath();
-  g.ellipse(x + 3, y + 4, 6, 3, 0, 0, TAU);
-  g.fill();
-  g.fillStyle = '#4a3f6a';
-  g.beginPath();
-  g.arc(x, y, 4, 0, TAU);
-  g.fill();
-  g.fillStyle = '#fff1c8';
-  g.beginPath();
-  g.arc(x, y, 2, 0, TAU);
-  g.fill();
-}
-
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();
   g.moveTo(x + r, y);
@@ -510,7 +533,7 @@ function building(g, b, rnd) {
     for (let wx = b.x + 8; wx < b.x + b.w - 10; wx += 15) {
       for (let wy = fy + 6; wy < fy + b.face - 8; wy += 12) {
         const r = rnd();
-        if (r < 0.5) {
+        if (r < 0.2) {
           const col = r < 0.32 ? '#ffcf7a' : r < 0.42 ? '#7af0ff' : '#ff8ad8';
           g.fillStyle = hexA(col, 0.25);
           g.fillRect(wx - 2, wy - 2, 13, 10);
